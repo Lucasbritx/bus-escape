@@ -110,8 +110,47 @@ export function drawVehicle(ctx, vehicle, cellSize, offsetX, offsetY, animDx = 0
   const borderColor = darken(baseColor, 0.30);
   const shadowColor = darken(baseColor, 0.55);
 
+  const dir     = vehicle.direction;
+  const isHoriz = dir === 'left' || dir === 'right';
+
   ctx.save();
   ctx.globalAlpha = alpha;
+
+  // ── Wheels (drawn before body so the bus covers their inner halves) ───────
+  const wR  = cellSize * 0.125;  // tire outer radius
+  const wRi = wR * 0.60;         // rim radius
+  const wRd = wR * 0.24;         // center hub dot
+
+  // Front and rear axle positions (20% / 80% along the length)
+  let wheelCenters;
+  if (isHoriz) {
+    const x1 = bx + bw * 0.22, x2 = bx + bw * 0.78;
+    wheelCenters = [
+      { x: x1, y: by },       { x: x2, y: by },       // top edge
+      { x: x1, y: by + bh },  { x: x2, y: by + bh },  // bottom edge
+    ];
+  } else {
+    const y1 = by + bh * 0.22, y2 = by + bh * 0.78;
+    wheelCenters = [
+      { x: bx,      y: y1 },  { x: bx,      y: y2 },  // left edge
+      { x: bx + bw, y: y1 },  { x: bx + bw, y: y2 },  // right edge
+    ];
+  }
+
+  for (const { x, y } of wheelCenters) {
+    // Tire (dark rubber)
+    ctx.beginPath(); ctx.arc(x, y, wR, 0, Math.PI * 2);
+    ctx.fillStyle = '#1a1a1a'; ctx.fill();
+    // Rim (silver)
+    ctx.beginPath(); ctx.arc(x, y, wRi, 0, Math.PI * 2);
+    ctx.fillStyle = '#cecece'; ctx.fill();
+    // Hub highlight
+    ctx.beginPath(); ctx.arc(x - wRi * 0.18, y - wRi * 0.18, wRi * 0.30, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.fill();
+    // Center bolt
+    ctx.beginPath(); ctx.arc(x, y, wRd, 0, Math.PI * 2);
+    ctx.fillStyle = '#888'; ctx.fill();
+  }
 
   // ── Drop shadow ──────────────────────────────────────────────────────────
   ctx.shadowColor   = shadowColor;
@@ -143,8 +182,6 @@ export function drawVehicle(ctx, vehicle, cellSize, offsetX, offsetY, animDx = 0
   ctx.stroke();
 
   // ── Bus details ──────────────────────────────────────────────────────────
-  const dir     = vehicle.direction;
-  const isHoriz = dir === 'left' || dir === 'right';
   const ip      = cellSize * 0.10;  // inner padding
   const wr      = r * 0.55;         // window corner radius
 
