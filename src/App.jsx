@@ -5,6 +5,7 @@ import WinScreen from './components/WinScreen.jsx';
 import { HAND_CRAFTED_LEVELS, getLevelData } from './game/levels.js';
 import { generateLevel } from './game/levelGenerator.js';
 import { slideVehicle, checkWin, buildGrid, computeSlideSteps, COLS } from './game/gameEngine.js';
+import { playSlide, playExit, playBlocked, playWin } from './game/sounds.js';
 
 const ANIM_DURATION = 280;   // ms – must match GameCanvas constant
 const EXIT_EXTRA    = 140;   // ms for the off-screen fade portion
@@ -72,7 +73,10 @@ export default function App() {
       // Compute slide
       const currentVehicles = vehicles; // closure is fine here
       const result = slideVehicle(vehicleId, currentVehicles);
-      if (!result.moved) return;
+      if (!result.moved) {
+        playBlocked();
+        return;
+      }
 
       animatingRef.current = true;
 
@@ -102,6 +106,13 @@ export default function App() {
       setVehicles(result.vehicles);
       setMoves((m) => m + 1);
 
+      // Play slide or exit sound immediately on tap
+      if (result.exited) {
+        playExit();
+      } else {
+        playSlide();
+      }
+
       // Total animation time
       const totalTime = exited ? ANIM_DURATION + EXIT_EXTRA : ANIM_DURATION;
 
@@ -115,6 +126,7 @@ export default function App() {
 
         // Check win after animation completes
         if (checkWin(result.vehicles)) {
+          playWin();
           setWon(true);
         }
       }, totalTime + 30);
