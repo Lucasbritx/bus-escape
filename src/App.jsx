@@ -25,11 +25,27 @@ function loadLevel(levelNumber) {
   return generateLevel(idx);
 }
 
+const STORAGE_KEY = 'busEscape_level';
+
+function getSavedLevel() {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    return v ? Math.max(1, parseInt(v, 10)) : 1;
+  } catch (_) {
+    return 1;
+  }
+}
+
+function saveLevel(num) {
+  try { localStorage.setItem(STORAGE_KEY, String(num)); } catch (_) {}
+}
+
 export default function App() {
+  const initialLevel = getSavedLevel();
   const [canvasWidth, setCanvasWidth] = useState(getCanvasWidth);
-  const [levelNumber, setLevelNumber] = useState(1);
-  const [levelData, setLevelData] = useState(() => loadLevel(1));
-  const [vehicles, setVehicles] = useState(() => loadLevel(1).vehicles);
+  const [levelNumber, setLevelNumber] = useState(initialLevel);
+  const [levelData, setLevelData] = useState(() => loadLevel(initialLevel));
+  const [vehicles, setVehicles] = useState(() => loadLevel(initialLevel).vehicles);
   const [moves, setMoves] = useState(0);
   const [won, setWon] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -52,6 +68,7 @@ export default function App() {
     setTimeout(() => {
       const data = loadLevel(num);
       setLevelNumber(num);
+      saveLevel(num);
       setLevelData(data);
       setVehicles(data.vehicles.map((v) => ({ ...v, exited: false })));
       setMoves(0);
