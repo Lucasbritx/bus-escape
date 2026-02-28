@@ -54,12 +54,45 @@ html, body {
   text-transform: uppercase;
 }
 
+.hud-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
 .hud-title {
   font-size: 18px;
   font-weight: 900;
   color: #ffffff;
   text-shadow: 0 0 12px rgba(255,215,0,0.5);
   letter-spacing: 0.5px;
+}
+
+.hud-passengers {
+  font-size: 11px;
+  color: #a0aec0;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.hud-passengers-num {
+  color: #56ccf2;
+  font-weight: 800;
+}
+
+.hud-passengers-sep {
+  color: rgba(255,255,255,0.4);
+  margin: 0 1px;
+}
+
+.hud-passengers-total {
+  color: #a0aec0;
+  font-weight: 700;
+}
+
+.hud-passengers-label {
+  color: rgba(255,255,255,0.4);
 }
 
 .hud-right {
@@ -204,6 +237,13 @@ html, body {
 
 .win-star--empty {
   color: rgba(255,255,255,0.2);
+}
+
+.win-subtitle {
+  font-size: 15px;
+  color: #56ccf2;
+  font-weight: 700;
+  letter-spacing: 0.3px;
 }
 
 .win-moves {

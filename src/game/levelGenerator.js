@@ -1,171 +1,275 @@
 // ─── Procedural Level Generator ─────────────────────────────────────────────
-// Generates BFS-guaranteed solvable levels.
+// Generates BFS-guaranteed solvable levels using the new parking mechanic.
 //
 // Algorithm:
-//  1. Place N vehicles randomly on the grid (no overlaps).
-//  2. Run BFS to see if all vehicles can exit in some order.
-//  3. If BFS finds a solution → return the level.
-//  4. Else retry up to MAX_RETRIES times.
-//
-// BFS state = sorted string of "id:col,row|col,row" for each non-exited vehicle.
+//  1. Pick 2-4 parking colors; assign them to random columns.
+//  2. Place one parking vehicle (direction=up) per color, matching column.
+//  3. Place blocker vehicles (down/left/right) to obstruct the parking lanes.
+//  4. Build passenger list matching each parking vehicle's capacity.
+//  5. BFS to verify all passengers can board (i.e., all parking vehicles can park).
+//  6. Retry up to MAX_RETRIES on failure.
 
-import { COLS, ROWS, buildGrid, computeSlideSteps, applySlide, checkWin, boardKey, cloneVehicles } from './gameEngine.js';
+import {
+  COLS, ROWS,
+  buildGrid, computeSlideSteps, applySlide,
+  checkWin, boardKey, cloneVehicles, clonePassengers, cloneParkingSpots,
+  boardPassengers, VEHICLE_CAPACITY,
+} from './gameEngine.js';
 import { COLOR_KEYS } from './drawVehicle.js';
 
-const DIRECTIONS = ['up', 'down', 'left', 'right'];
-const MAX_BFS_STATES = 15000;
-const MAX_RETRIES = 60;
+const DIRECTIONS_BLOCKER = ['down', 'left', 'right'];
+const MAX_BFS_STATES = 20000;
+const MAX_RETRIES    = 80;
 
-// ── Placement helpers ─────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
     const j = (Math.random() * (i + 1)) | 0;
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+    [a[i], a[j]] = [a[j], a[i]];
   }
-  return arr;
+  return a;
+}
+
+function randInt(min, max) {
+  return min + ((Math.random() * (max - min + 1)) | 0);
 }
 
 /**
- * Try to place a vehicle of given size/direction on the grid.
- * Returns cells array or null if no valid placement found.
+ * Try to place a vehicle at anchor position going in direction.
+ * Returns cells or null.
  */
-function findPlacement(size, direction, occupied) {
+function tryPlace(size, direction, anchorCol, anchorRow, occupied) {
   const isHoriz = direction === 'left' || direction === 'right';
+  const cells = [];
+  for (let i = 0; i < size; i++) {
+    const nc = isHoriz ? anchorCol + i : anchorCol;
+    const nr = isHoriz ? anchorRow     : anchorRow + i;
+    if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) return null;
+    const key = `${nc},${nr}`;
+    if (occupied.has(key)) return null;
+    cells.push([nc, nr]);
+  }
+  return cells;
+}
 
-  // Build all possible anchor positions
+/**
+ * Place a vehicle of given size/direction anywhere on grid (shuffled search).
+ */
+function findPlacement(size, direction, occupied, forbiddenCols = new Set()) {
+  const isHoriz = direction === 'left' || direction === 'right';
   const positions = [];
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
+      if (!isHoriz && forbiddenCols.has(c)) continue; // parking column — don't block upward path with vertical vehicle in same col
       positions.push([c, r]);
     }
   }
   shuffle(positions);
 
-  for (const [ac, ar] of positions) {
-    // Build cells from anchor
-    const cells = [];
-    let valid = true;
-    for (let i = 0; i < size; i++) {
-      const nc = isHoriz ? ac + i : ac;
-      const nr = isHoriz ? ar : ar + i;
-      if (nc >= COLS || nr >= ROWS) { valid = false; break; }
-      const key = `${nc},${nr}`;
-      if (occupied.has(key)) { valid = false; break; }
-      cells.push([nc, nr]);
-    }
-    if (!valid) continue;
-
-    // The vehicle must be able to eventually reach its exit edge.
-    // Quick check: is there at least one clear step in direction from front?
-    // (Full guarantee is via BFS, so just check no immediate wrap issues.)
-    return cells;
+  for (const [c, r] of positions) {
+    const cells = tryPlace(size, direction, c, r, occupied);
+    if (cells) return cells;
   }
   return null;
 }
 
-/**
- * Generate a random vehicle list of `count` vehicles.
- * Returns array of vehicle objects or null if placement fails.
- */
-function generateVehicles(count, levelIndex) {
-  const occupied = new Set();
-  const vehicles = [];
-  const colors = shuffle([...COLOR_KEYS]);
-
-  for (let i = 0; i < count; i++) {
-    // Mix of cars (size 2) and buses (size 3). More buses at higher levels.
-    const busRatio = Math.min(0.3 + levelIndex * 0.05, 0.6);
-    const size = Math.random() < busRatio ? 3 : 2;
-    const direction = DIRECTIONS[(Math.random() * DIRECTIONS.length) | 0];
-    const cells = findPlacement(size, direction, occupied);
-    if (!cells) return null; // failed to place
-
-    const color = colors[i % colors.length];
-    cells.forEach(([c, r]) => occupied.add(`${c},${r}`));
-    vehicles.push({ id: `v${i + 1}`, color, direction, size, cells, exited: false });
-  }
-  return vehicles;
-}
-
-// ── BFS Solver ───────────────────────────────────────────────────────────────
+// ── BFS Solver ────────────────────────────────────────────────────────────────
 
 /**
- * BFS over game states. Each state = vehicle list snapshot.
- * Explores all possible tap sequences. Returns true if all vehicles can exit.
+ * BFS over (vehicles, passengers, parkingSpots) states.
+ * Win = all passengers boarded.
  */
-function isSolvable(initialVehicles) {
-  const startKey = boardKey(initialVehicles);
-  const visited = new Set([startKey]);
-  const queue = [initialVehicles];
+function isSolvable(initialVehicles, initialPassengers, initialParkingSpots) {
+  const startKey = boardKey(initialVehicles, initialPassengers);
+  const visited  = new Set([startKey]);
+  // Queue items: [vehicles, passengers, parkingSpots]
+  const queue    = [[initialVehicles, initialPassengers, initialParkingSpots]];
 
   while (queue.length > 0) {
-    if (visited.size > MAX_BFS_STATES) return false; // gave up
+    if (visited.size > MAX_BFS_STATES) return false;
 
-    const state = queue.shift();
+    const [vehicles, passengers, parkingSpots] = queue.shift();
 
-    if (checkWin(state)) return true;
+    if (checkWin(passengers)) return true;
 
-    // Try tapping each non-exited vehicle
-    for (const v of state) {
-      if (v.exited) continue;
+    const grid = buildGrid(vehicles);
 
-      const grid = buildGrid(state);
-      const { steps, exits } = computeSlideSteps(v, grid);
-      if (steps === 0 && !exits) continue; // this vehicle can't move at all
+    for (const v of vehicles) {
+      if (v.exited || v.parked) continue;
 
-      // Apply the slide
-      const updatedV = applySlide(v, steps, exits);
-      const newState = state.map((sv) => (sv.id === v.id ? updatedV : sv));
+      const { steps, exits, parks, parkCol } = computeSlideSteps(v, grid, parkingSpots);
+      if (steps === 0 && !exits && !parks) continue;
 
-      const key = boardKey(newState);
+      const updatedV = applySlide(v, steps, exits, parks);
+      const newVehicles = vehicles.map((sv) => (sv.id === v.id ? updatedV : sv));
+
+      let newPassengers = passengers;
+      let newParkingSpots = parkingSpots;
+
+      if (parks && parkCol !== undefined) {
+        newParkingSpots = parkingSpots.map((s, i) =>
+          i === parkCol ? { ...s, occupiedBy: v.id } : s
+        );
+        newPassengers = boardPassengers(updatedV, passengers);
+      }
+
+      const key = boardKey(newVehicles, newPassengers);
       if (!visited.has(key)) {
         visited.add(key);
-        queue.push(newState);
+        queue.push([newVehicles, newPassengers, newParkingSpots]);
       }
     }
   }
+
   return false;
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
+// ── Level generation ──────────────────────────────────────────────────────────
+
+function generateLevelAttempt(levelIndex) {
+  // 1. Choose number of parking colors
+  const numColors = randInt(
+    Math.min(2, 2 + Math.floor(levelIndex / 2)),
+    Math.min(4, 2 + Math.floor(levelIndex / 1.5))
+  );
+
+  // 2. Pick distinct colors and assign to distinct columns
+  const allColors  = shuffle([...COLOR_KEYS]);
+  const parkColors = allColors.slice(0, numColors);
+  const allCols    = shuffle([0, 1, 2, 3, 4, 5, 6]);
+  const parkCols   = allCols.slice(0, numColors);
+
+  // 3. Build parking spots array
+  const parkingSpots = Array(COLS).fill(null);
+  for (let i = 0; i < numColors; i++) {
+    parkingSpots[parkCols[i]] = { color: parkColors[i] };
+  }
+
+  const occupied = new Set();
+  const vehicles = [];
+  let vidx = 1;
+
+  // 4. Place parking vehicles (up, must fit in assigned column)
+  for (let i = 0; i < numColors; i++) {
+    const col = parkCols[i];
+    const color = parkColors[i];
+    // Buses at higher levels
+    const isBus = levelIndex >= 2 ? Math.random() < 0.5 : false;
+    const size = isBus ? 3 : 2;
+
+    // Place in column, leaving enough rows below for interesting blocking
+    // Avoid rows 0-1 (so there's room for blockers above the vehicle)
+    let placed = false;
+    const rowStart = isBus ? 3 : 2;
+    for (let r = ROWS - size; r >= rowStart; r--) {
+      const cells = tryPlace(size, 'up', col, r, occupied);
+      if (cells) {
+        cells.forEach(([c, row]) => occupied.add(`${c},${row}`));
+        vehicles.push({
+          id: `v${vidx++}`,
+          color,
+          direction: 'up',
+          cells,
+          exited: false,
+          parked: false,
+        });
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) return null; // can't place parking vehicle
+  }
+
+  // 5. Place blocker vehicles
+  const parkColSet = new Set(parkCols);
+  const blockerCount = randInt(
+    3 + Math.min(levelIndex * 2, 8),
+    5 + Math.min(levelIndex * 3, 12)
+  );
+
+  for (let i = 0; i < blockerCount; i++) {
+    const dir  = DIRECTIONS_BLOCKER[(Math.random() * DIRECTIONS_BLOCKER.length) | 0];
+    const size = Math.random() < 0.35 ? 3 : 2;
+    const cells = findPlacement(size, dir, occupied, parkColSet);
+    if (!cells) continue;
+
+    const color = allColors[(vidx - 1) % allColors.length];
+    cells.forEach(([c, r]) => occupied.add(`${c},${r}`));
+    vehicles.push({
+      id: `v${vidx++}`,
+      color,
+      direction: dir,
+      cells,
+      exited: false,
+      parked: false,
+    });
+  }
+
+  // 6. Build passenger list
+  const passengers = [];
+  let pidx = 1;
+  for (let i = 0; i < numColors; i++) {
+    const parkingVehicle = vehicles[i]; // parking vehicles are first
+    const size = parkingVehicle.cells.length;
+    const capacity = VEHICLE_CAPACITY[size] ?? 4;
+    for (let j = 0; j < capacity; j++) {
+      passengers.push({ id: `p${pidx++}`, color: parkColors[i], boarded: false });
+    }
+  }
+
+  return { vehicles, passengers, parkingSpots };
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Generate a guaranteed-solvable procedural level.
- * @param {number} levelIndex - 0-based index (0 = level 4 of the game)
- * @returns {{ label: string, vehicles: Vehicle[] }}
+ * @param {number} levelIndex - 0-based (0 = game level 4)
  */
 export function generateLevel(levelIndex) {
-  // Scale vehicle count with level index
-  const minCount = 8 + Math.min(levelIndex * 2, 10);
-  const maxCount = minCount + 3;
-
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const count = minCount + ((Math.random() * (maxCount - minCount + 1)) | 0);
-    const vehicles = generateVehicles(count, levelIndex);
-    if (!vehicles) continue; // placement failed
+    const data = generateLevelAttempt(levelIndex);
+    if (!data) continue;
 
-    if (isSolvable(vehicles)) {
+    const { vehicles, passengers, parkingSpots } = data;
+    if (isSolvable(vehicles, passengers, parkingSpots)) {
       return {
-        label: `Level ${levelIndex + 4}`,
+        label:        `Level ${levelIndex + 4}`,
         vehicles,
+        passengers,
+        parkingSpots,
       };
     }
   }
 
-  // Fallback: return a minimal trivially-solvable level (all free-sliding)
+  // Fallback: trivially solvable 2-color level
   return generateTrivialLevel(levelIndex);
 }
 
-/** Fallback: all vehicles face an open edge with no blockers */
+/** Fallback: one parking vehicle per color, no blockers */
 function generateTrivialLevel(levelIndex) {
+  const parkingSpots = Array(COLS).fill(null);
+  parkingSpots[2] = { color: 'red' };
+  parkingSpots[5] = { color: 'blue' };
+
   const vehicles = [
-    { id: 'v1', color: 'red',    direction: 'right', cells: [[0,1],[1,1]], exited: false },
-    { id: 'v2', color: 'blue',   direction: 'right', cells: [[0,3],[1,3]], exited: false },
-    { id: 'v3', color: 'green',  direction: 'down',  cells: [[3,0],[3,1]], exited: false },
-    { id: 'v4', color: 'yellow', direction: 'left',  cells: [[5,5],[6,5]], exited: false },
-    { id: 'v5', color: 'purple', direction: 'up',    cells: [[1,7],[1,8]], exited: false },
-    { id: 'v6', color: 'teal',   direction: 'right', cells: [[0,7],[1,7],[2,7]], exited: false },
+    { id: 'v1', color: 'red',  direction: 'up', cells: [[2, 6], [2, 7]], exited: false, parked: false },
+    { id: 'v2', color: 'blue', direction: 'up', cells: [[5, 6], [5, 7]], exited: false, parked: false },
+    { id: 'v3', color: 'teal', direction: 'right', cells: [[0, 4], [1, 4]], exited: false, parked: false },
   ];
-  return { label: `Level ${levelIndex + 4}`, vehicles };
+
+  const passengers = [
+    { id: 'p1', color: 'red',  boarded: false },
+    { id: 'p2', color: 'red',  boarded: false },
+    { id: 'p3', color: 'red',  boarded: false },
+    { id: 'p4', color: 'red',  boarded: false },
+    { id: 'p5', color: 'blue', boarded: false },
+    { id: 'p6', color: 'blue', boarded: false },
+    { id: 'p7', color: 'blue', boarded: false },
+    { id: 'p8', color: 'blue', boarded: false },
+  ];
+
+  return { label: `Level ${levelIndex + 4}`, vehicles, passengers, parkingSpots };
 }

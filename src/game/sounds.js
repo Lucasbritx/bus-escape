@@ -103,6 +103,62 @@ export function playBlocked() {
   } catch (_) {}
 }
 
+// ── Park: satisfying mechanical click-clunk ───────────────────────────────────
+export function playPark() {
+  try {
+    const ac = getCtx();
+    const t  = ac.currentTime;
+
+    // Thunk: low pitched impact
+    const buf = ac.createBuffer(1, ac.sampleRate * 0.12, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ac.sampleRate * 0.018));
+    }
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const gainN = ac.createGain();
+    gainN.gain.setValueAtTime(0.28, t);
+    gainN.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    src.connect(gainN); gainN.connect(ac.destination);
+    src.start(t); src.stop(t + 0.13);
+
+    // Click: short high pitched tone
+    const osc  = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(520, t);
+    osc.frequency.exponentialRampToValueAtTime(220, t + 0.06);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.14, t + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.start(t); osc.stop(t + 0.10);
+  } catch (_) {}
+}
+
+// ── Board: soft quick chime for passengers boarding ───────────────────────────
+export function playBoard() {
+  try {
+    const ac = getCtx();
+    const t  = ac.currentTime;
+
+    // Two quick ascending notes
+    [880, 1320].forEach((freq, i) => {
+      const dt   = t + i * 0.07;
+      const osc  = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, dt);
+      gain.gain.setValueAtTime(0, dt);
+      gain.gain.linearRampToValueAtTime(0.12, dt + 0.010);
+      gain.gain.exponentialRampToValueAtTime(0.001, dt + 0.18);
+      osc.connect(gain); gain.connect(ac.destination);
+      osc.start(dt); osc.stop(dt + 0.20);
+    });
+  } catch (_) {}
+}
+
 // ── Win: cheerful C-major arpeggio ───────────────────────────────────────────
 export function playWin() {
   try {

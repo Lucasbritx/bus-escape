@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import GameCanvas from './components/GameCanvas.jsx';
+import GameCanvas, { PARKING_ROWS, PASSENGER_ROWS } from './components/GameCanvas.jsx';
 import HUD from './components/HUD.jsx';
 import WinScreen from './components/WinScreen.jsx';
 import { HAND_CRAFTED_LEVELS, getLevelData } from './game/levels.js';
 import { generateLevel } from './game/levelGenerator.js';
-import { slideVehicle, checkWin, buildGrid, computeSlideSteps, COLS } from './game/gameEngine.js';
-import { playSlide, playExit, playBlocked, playWin } from './game/sounds.js';
+import { slideVehicle, checkWin, COLS } from './game/gameEngine.js';
+import { playSlide, playExit, playBlocked, playWin, playPark, playBoard } from './game/sounds.js';
 
-const ANIM_DURATION = 280;   // ms – must match GameCanvas constant
-const EXIT_EXTRA    = 140;   // ms for the off-screen fade portion
+const ANIM_DURATION  = 280;  // ms – must match GameCanvas constant
+const EXIT_EXTRA     = 140;  // ms for off-screen fade (exits)
+const PARK_EXTRA     = 112;  // ms for park fade-in
 
 // ── Canvas width (responsive) ─────────────────────────────────────────────────
 function getCanvasWidth() {
@@ -17,11 +18,10 @@ function getCanvasWidth() {
 
 // ── Level loader ──────────────────────────────────────────────────────────────
 function loadLevel(levelNumber) {
-  // 1-indexed. Levels 1-3 = hand-crafted, 4+ = procedural.
   if (levelNumber <= HAND_CRAFTED_LEVELS.length) {
     return getLevelData(HAND_CRAFTED_LEVELS[levelNumber - 1]);
   }
-  const idx = levelNumber - HAND_CRAFTED_LEVELS.length - 1; // 0-based for generator
+  const idx = levelNumber - HAND_CRAFTED_LEVELS.length - 1;
   return generateLevel(idx);
 }
 
@@ -42,17 +42,19 @@ function saveLevel(num) {
 
 export default function App() {
   const initialLevel = getSavedLevel();
-  const [canvasWidth, setCanvasWidth] = useState(getCanvasWidth);
-  const [levelNumber, setLevelNumber] = useState(initialLevel);
-  const [levelData, setLevelData] = useState(() => loadLevel(initialLevel));
-  const [vehicles, setVehicles] = useState(() => loadLevel(initialLevel).vehicles);
-  const [moves, setMoves] = useState(0);
-  const [won, setWon] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  const [canvasWidth, setCanvasWidth]     = useState(getCanvasWidth);
+  const [levelNumber, setLevelNumber]     = useState(initialLevel);
+  const [levelData, setLevelData]         = useState(() => loadLevel(initialLevel));
+  const [vehicles, setVehicles]           = useState(() => loadLevel(initialLevel).vehicles);
+  const [passengers, setPassengers]       = useState(() => loadLevel(initialLevel).passengers);
+  const [parkingSpots, setParkingSpots]   = useState(() => loadLevel(initialLevel).parkingSpots);
+  const [moves, setMoves]                 = useState(0);
+  const [won, setWon]                     = useState(false);
+  const [generating, setGenerating]       = useState(false);
 
-  // Map<vehicleId, { startTime, fromDx, fromDy, isExit, exitDx, exitDy }>
-  const [animations, setAnimations] = useState(new Map());
-  const animatingRef = useRef(false); // debounce taps during animation
+  // Map<vehicleId, { startTime, fromDx, fromDy, isExit, isPark, exitDx, exitDy }>
+  const [animations, setAnimations]       = useState(new Map());
+  const animatingRef = useRef(false);
 
   // ── Responsive resize ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -64,13 +66,14 @@ export default function App() {
   // ── Load a level ──────────────────────────────────────────────────────────
   const startLevel = useCallback((num) => {
     setGenerating(true);
-    // Use setTimeout to let React render the "Generating…" state first
     setTimeout(() => {
       const data = loadLevel(num);
       setLevelNumber(num);
       saveLevel(num);
       setLevelData(data);
-      setVehicles(data.vehicles.map((v) => ({ ...v, exited: false })));
+      setVehicles(data.vehicles);
+      setPassengers(data.passengers);
+      setParkingSpots(data.parkingSpots);
       setMoves(0);
       setWon(false);
       setAnimations(new Map());
@@ -79,7 +82,7 @@ export default function App() {
     }, 10);
   }, []);
 
-  const handleRestart = useCallback(() => startLevel(levelNumber), [levelNumber, startLevel]);
+  const handleRestart   = useCallback(() => startLevel(levelNumber), [levelNumber, startLevel]);
   const handleNextLevel = useCallback(() => startLevel(levelNumber + 1), [levelNumber, startLevel]);
 
   // ── Tap handler ───────────────────────────────────────────────────────────
@@ -87,9 +90,7 @@ export default function App() {
     (vehicleId) => {
       if (animatingRef.current || won) return;
 
-      // Compute slide
-      const currentVehicles = vehicles; // closure is fine here
-      const result = slideVehicle(vehicleId, currentVehicles);
+      const result = slideVehicle(vehicleId, vehicles, parkingSpots, passengers);
       if (!result.moved) {
         playBlocked();
         return;
@@ -97,41 +98,60 @@ export default function App() {
 
       animatingRef.current = true;
 
-      const tappedVehicle = currentVehicles.find((v) => v.id === vehicleId);
+      const tappedVehicle = vehicles.find((v) => v.id === vehicleId);
       const cellSize = Math.floor(canvasWidth / COLS);
 
-      // Compute animation: vehicle starts from old position and moves to new
-      // We store the "from" pixel offset (how far back we start)
-      const { steps, exited } = result;
+      const { steps, exited, parks } = result;
       const dirDelta = { up: [0,-1], down: [0,1], left: [-1,0], right: [1,0] };
       const [dc, dr] = dirDelta[tappedVehicle.direction];
 
-      // fromDx/fromDy = negative of where it moved to, so it starts visually at origin
-      // and lerps to 0 (its new position)
       const fromDx = -dc * steps * cellSize;
       const fromDy = -dr * steps * cellSize;
 
-      // exitDx/exitDy = extra off-screen movement after reaching new position
+      // Exit: slide off screen
       const exitDx = exited ? dc * (cellSize * 3) : 0;
       const exitDy = exited ? dr * (cellSize * 3) : 0;
 
+      // Park: continue sliding up into parking area then fade
+      // The parking area is above the grid; for an up vehicle that parks,
+      // we animate it continuing upward past row 0.
+      const parkDy = parks ? -(cellSize * (PARKING_ROWS + 1)) : 0;
+
       const now = performance.now();
       const newAnim = new Map(animations);
-      newAnim.set(vehicleId, { startTime: now, fromDx, fromDy, isExit: exited, exitDx, exitDy });
+      newAnim.set(vehicleId, {
+        startTime: now,
+        fromDx,
+        fromDy,
+        isExit: exited,
+        isPark: parks,
+        exitDx,
+        exitDy: exited ? exitDy : parkDy,
+      });
 
       setAnimations(newAnim);
       setVehicles(result.vehicles);
+      setPassengers(result.passengers);
+      setParkingSpots(result.parkingSpots);
       setMoves((m) => m + 1);
 
-      // Play slide or exit sound immediately on tap
-      if (result.exited) {
+      // Sound
+      if (parks) {
+        playPark();
+      } else if (exited) {
         playExit();
       } else {
         playSlide();
       }
 
-      // Total animation time
-      const totalTime = exited ? ANIM_DURATION + EXIT_EXTRA : ANIM_DURATION;
+      // Board sound fires slightly after park sound
+      if (parks) {
+        setTimeout(() => playBoard(), 160);
+      }
+
+      const totalTime = (exited || parks)
+        ? ANIM_DURATION + (exited ? EXIT_EXTRA : PARK_EXTRA)
+        : ANIM_DURATION;
 
       setTimeout(() => {
         setAnimations((prev) => {
@@ -141,25 +161,32 @@ export default function App() {
         });
         animatingRef.current = false;
 
-        // Check win after animation completes
-        if (checkWin(result.vehicles)) {
+        if (checkWin(result.passengers)) {
           playWin();
           setWon(true);
         }
       }, totalTime + 30);
     },
-    [vehicles, won, animations, canvasWidth]
+    [vehicles, passengers, parkingSpots, won, animations, canvasWidth]
   );
 
-  // ── Render ────────────────────────────────────────────────────────────────
-  const cellSize = Math.floor(canvasWidth / COLS);
-  const canvasHeight = cellSize * 9; // ROWS = 9
+  // ── Computed stats ────────────────────────────────────────────────────────
+  const boardedCount = passengers.filter((p) => p.boarded).length;
+  const totalCount   = passengers.length;
+
+  // ── Canvas height ─────────────────────────────────────────────────────────
+  const cellSize     = Math.floor(canvasWidth / COLS);
+  const canvasHeight = Math.round(cellSize * PARKING_ROWS)
+                     + Math.round(cellSize * PASSENGER_ROWS)
+                     + cellSize * 9;
 
   return (
     <div className="app">
       <HUD
         levelLabel={levelData.label}
         moves={moves}
+        boarded={boardedCount}
+        total={totalCount}
         onRestart={handleRestart}
       />
 
@@ -172,6 +199,8 @@ export default function App() {
         ) : (
           <GameCanvas
             vehicles={vehicles}
+            passengers={passengers}
+            parkingSpots={parkingSpots}
             onVehicleTap={handleVehicleTap}
             animations={animations}
             width={canvasWidth}
@@ -181,6 +210,8 @@ export default function App() {
           <WinScreen
             levelLabel={levelData.label}
             moves={moves}
+            boarded={boardedCount}
+            total={totalCount}
             onNext={handleNextLevel}
             onRestart={handleRestart}
           />
@@ -188,7 +219,7 @@ export default function App() {
       </div>
 
       <div className="footer">
-        <p className="footer-hint">Tap a vehicle to slide it out!</p>
+        <p className="footer-hint">Tap a vehicle to move it — park the colored buses!</p>
       </div>
     </div>
   );

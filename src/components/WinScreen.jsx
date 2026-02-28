@@ -1,8 +1,7 @@
-export default function WinScreen({ levelLabel, moves, onNext, onRestart }) {
-  // Star rating based on moves
+export default function WinScreen({ levelLabel, moves, boarded, total, onNext, onRestart }) {
   const getStars = () => {
     if (moves <= 5) return 3;
-    if (moves <= 10) return 2;
+    if (moves <= 12) return 2;
     return 1;
   };
   const stars = getStars();
@@ -19,8 +18,9 @@ export default function WinScreen({ levelLabel, moves, onNext, onRestart }) {
             </span>
           ))}
         </div>
+        <p className="win-subtitle">All passengers boarded!</p>
         <p className="win-moves">
-          Completed in <strong>{moves}</strong> move{moves !== 1 ? 's' : ''}
+          <strong>{boarded}/{total}</strong> passengers · <strong>{moves}</strong> move{moves !== 1 ? 's' : ''}
         </p>
         <div className="win-actions">
           <button className="btn-next" onClick={onNext}>

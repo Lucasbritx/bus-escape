@@ -272,6 +272,187 @@ export function drawVehicle(ctx, vehicle, cellSize, offsetX, offsetY, animDx = 0
 }
 
 /**
+ * Draw the parking area (above the grid).
+ * Each slot is a colored angled bay with a small bus icon when occupied.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Array} parkingSpots  - array of { color, occupiedBy? } | null  (length = COLS)
+ * @param {object[]} vehicles   - full vehicle list (to look up parked vehicles)
+ * @param {number} cellSize
+ * @param {number} offsetX      - same offsetX as grid
+ * @param {number} offsetY      - TOP of the parking area (above the grid)
+ * @param {number} areaH        - height of the parking area in px
+ */
+export function drawParkingArea(ctx, parkingSpots, vehicles, cellSize, offsetX, offsetY, areaH) {
+  const slotW = cellSize;
+  const slotH = areaH * 0.82;
+  const slotY = offsetY + (areaH - slotH) / 2;
+  const skew  = 6; // px slant on each side for angled bay look
+
+  ctx.save();
+
+  for (let col = 0; col < parkingSpots.length; col++) {
+    const spot = parkingSpots[col];
+    const slotX = offsetX + col * cellSize;
+    const cx    = slotX + slotW / 2;
+
+    if (!spot) {
+      // Empty non-parking column: subtle dark indent
+      ctx.beginPath();
+      ctx.moveTo(slotX + skew,       slotY);
+      ctx.lineTo(slotX + slotW - skew, slotY);
+      ctx.lineTo(slotX + slotW,      slotY + slotH);
+      ctx.lineTo(slotX,              slotY + slotH);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.fill();
+      continue;
+    }
+
+    const baseColor = getColor(spot.color);
+    const darkColor = darken(baseColor, 0.35);
+    const isOccupied = !!spot.occupiedBy;
+
+    // Bay background
+    ctx.beginPath();
+    ctx.moveTo(slotX + skew,       slotY);
+    ctx.lineTo(slotX + slotW - skew, slotY);
+    ctx.lineTo(slotX + slotW,      slotY + slotH);
+    ctx.lineTo(slotX,              slotY + slotH);
+    ctx.closePath();
+
+    if (isOccupied) {
+      // Filled with vehicle color
+      ctx.fillStyle = baseColor;
+      ctx.fill();
+      ctx.strokeStyle = darkColor;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Small vehicle icon: rounded rectangle in center
+      const iw = slotW * 0.58, ih = slotH * 0.48;
+      const ix = cx - iw / 2, iy = slotY + (slotH - ih) / 2;
+      roundRect(ctx, ix, iy, iw, ih, 4);
+      ctx.fillStyle = darken(baseColor, 0.18);
+      ctx.fill();
+      // Tiny windshield
+      roundRect(ctx, ix + iw * 0.60, iy + ih * 0.20, iw * 0.28, ih * 0.60, 2);
+      ctx.fillStyle = 'rgba(160,210,255,0.80)';
+      ctx.fill();
+      // Checkmark overlay
+      ctx.strokeStyle = 'rgba(255,255,255,0.90)';
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx - slotW * 0.14, slotY + slotH * 0.56);
+      ctx.lineTo(cx - slotW * 0.03, slotY + slotH * 0.70);
+      ctx.lineTo(cx + slotW * 0.17, slotY + slotH * 0.38);
+      ctx.stroke();
+    } else {
+      // Empty slot: subtle gradient fill
+      const grad = ctx.createLinearGradient(slotX, slotY, slotX, slotY + slotH);
+      grad.addColorStop(0, `${baseColor}55`);
+      grad.addColorStop(1, `${baseColor}22`);
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = baseColor;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Color dot in center
+      ctx.beginPath();
+      ctx.arc(cx, slotY + slotH * 0.50, slotW * 0.14, 0, Math.PI * 2);
+      ctx.fillStyle = `${baseColor}99`;
+      ctx.fill();
+    }
+
+    // Lane lines on either side of occupied spots
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(slotX, slotY); ctx.lineTo(slotX, slotY + slotH);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Draw the passenger queue row (between parking area and grid).
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object[]} passengers  - array of { id, color, boarded }
+ * @param {number} cellSize
+ * @param {number} offsetX
+ * @param {number} offsetY       - TOP of the passenger row
+ * @param {number} areaH         - height of passenger area in px
+ * @param {number} totalCols     - number of grid columns (to determine total width)
+ */
+export function drawPassengerQueue(ctx, passengers, cellSize, offsetX, offsetY, areaH, totalCols) {
+  const totalW = totalCols * cellSize;
+  const centerY = offsetY + areaH / 2;
+
+  // Background strip
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(offsetX, offsetY, totalW, areaH);
+
+  const n = passengers.length;
+  if (n === 0) { ctx.restore(); return; }
+
+  // Size each stickman to fit nicely
+  const maxR  = Math.min(areaH * 0.32, (totalW / n) * 0.38);
+  const r     = Math.max(4, maxR);
+  const gap   = Math.max(r * 0.4, (totalW - n * r * 2) / (n + 1));
+  const startX = offsetX + gap + r;
+
+  for (let i = 0; i < n; i++) {
+    const p  = passengers[i];
+    const px = startX + i * (r * 2 + gap);
+    const baseColor = getColor(p.color);
+
+    ctx.globalAlpha = p.boarded ? 0.22 : 1.0;
+
+    // Body circle
+    ctx.beginPath();
+    ctx.arc(px, centerY, r, 0, Math.PI * 2);
+    ctx.fillStyle = baseColor;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Head (smaller circle on top)
+    const hr = r * 0.50;
+    ctx.beginPath();
+    ctx.arc(px, centerY - r * 0.58, hr, 0, Math.PI * 2);
+    ctx.fillStyle = darken(baseColor, 0.15);
+    ctx.fill();
+
+    if (p.boarded) {
+      // Tiny checkmark
+      ctx.globalAlpha = 0.7;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = Math.max(1, r * 0.28);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(px - r * 0.35, centerY);
+      ctx.lineTo(px - r * 0.05, centerY + r * 0.32);
+      ctx.lineTo(px + r * 0.42, centerY - r * 0.30);
+      ctx.stroke();
+    }
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/**
  * Draw the grid background.
  */
 export function drawGrid(ctx, cols, rows, cellSize, offsetX, offsetY) {
