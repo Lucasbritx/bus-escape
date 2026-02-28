@@ -6,7 +6,7 @@ const ANIM_DURATION = 280; // ms
 
 // Layout constants (as fractions of cellSize)
 export const PARKING_ROWS = 1.5;  // parking area height in cell-units
-export const PASSENGER_ROWS = 1.0; // passenger area height in cell-units
+export const PASSENGER_ROWS = 1.8; // passenger area height in cell-units
 
 /**
  * GameCanvas

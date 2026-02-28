@@ -382,6 +382,176 @@ export function drawParkingArea(ctx, parkingSpots, vehicles, cellSize, offsetX, 
 }
 
 /**
+ * Draw one stickman passenger centered at (px, baseY).
+ * baseY is the bottom of the feet.
+ * scale controls the total height.
+ */
+function drawPassenger(ctx, px, baseY, scale, baseColor, boarded) {
+  ctx.save();
+  ctx.globalAlpha = boarded ? 0.28 : 1.0;
+
+  const skinColor  = '#f5cba7';
+  const darkColor  = darken(baseColor, 0.28);
+  const lw         = Math.max(1.2, scale * 0.095); // limb stroke width
+
+  // ── proportions (all relative to scale = total body height) ──────────────
+  const headR      = scale * 0.220;  // head radius
+  const headCY     = baseY - scale + headR;          // head centre Y
+
+  const neckY      = headCY + headR;                 // top of torso
+  const hipY       = neckY + scale * 0.310;          // hip joint
+  const torsoMidY  = (neckY + hipY) / 2;
+
+  // shoulders
+  const shoulderY  = neckY + scale * 0.07;
+  const shoulderX  = scale * 0.22;
+
+  // elbow (arms angled outward and slightly down)
+  const elbowX     = shoulderX + scale * 0.20;
+  const elbowY     = shoulderY + scale * 0.13;
+
+  // wrist / hand
+  const wristX     = elbowX + scale * 0.10;
+  const wristY     = elbowY + scale * 0.10;
+
+  // knees
+  const kneeX      = scale * 0.10;
+  const kneeY      = hipY + scale * 0.14;
+
+  // feet
+  const footX      = kneeX + scale * 0.04;
+  // footY = baseY
+
+  // ── Shirt / torso (filled oval) ───────────────────────────────────────────
+  ctx.beginPath();
+  ctx.ellipse(
+    px, torsoMidY,
+    scale * 0.155, (hipY - neckY) * 0.52,
+    0, 0, Math.PI * 2
+  );
+  ctx.fillStyle = baseColor;
+  ctx.fill();
+
+  // ── Legs ─────────────────────────────────────────────────────────────────
+  ctx.lineCap  = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = lw;
+
+  // Trousers (slightly darker)
+  ctx.strokeStyle = darkColor;
+
+  // Left leg: hip → knee → foot
+  ctx.beginPath();
+  ctx.moveTo(px, hipY);
+  ctx.lineTo(px - kneeX, kneeY);
+  ctx.lineTo(px - footX, baseY);
+  ctx.stroke();
+
+  // Right leg
+  ctx.beginPath();
+  ctx.moveTo(px, hipY);
+  ctx.lineTo(px + kneeX, kneeY);
+  ctx.lineTo(px + footX, baseY);
+  ctx.stroke();
+
+  // ── Arms ─────────────────────────────────────────────────────────────────
+  ctx.strokeStyle = baseColor;
+
+  // Left arm
+  ctx.beginPath();
+  ctx.moveTo(px - scale * 0.08, shoulderY);
+  ctx.lineTo(px - elbowX, elbowY);
+  ctx.lineTo(px - wristX, wristY);
+  ctx.stroke();
+
+  // Right arm
+  ctx.beginPath();
+  ctx.moveTo(px + scale * 0.08, shoulderY);
+  ctx.lineTo(px + elbowX, elbowY);
+  ctx.lineTo(px + wristX, wristY);
+  ctx.stroke();
+
+  // ── Neck ─────────────────────────────────────────────────────────────────
+  ctx.strokeStyle = skinColor;
+  ctx.lineWidth = lw * 0.85;
+  ctx.beginPath();
+  ctx.moveTo(px, neckY);
+  ctx.lineTo(px, headCY + headR * 0.5);
+  ctx.stroke();
+
+  // ── Head ─────────────────────────────────────────────────────────────────
+  // Shadow
+  ctx.beginPath();
+  ctx.arc(px + 1, headCY + 1.5, headR, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fill();
+
+  // Skin fill
+  ctx.beginPath();
+  ctx.arc(px, headCY, headR, 0, Math.PI * 2);
+  ctx.fillStyle = skinColor;
+  ctx.fill();
+
+  // Hair band (colored cap matching the team color)
+  ctx.beginPath();
+  ctx.arc(px, headCY, headR, Math.PI * 1.15, Math.PI * 1.85);
+  ctx.lineTo(px, headCY);
+  ctx.closePath();
+  ctx.fillStyle = baseColor;
+  ctx.fill();
+
+  // Face: two eyes
+  const eyeR  = headR * 0.155;
+  const eyeOX = headR * 0.32;
+  const eyeY  = headCY - headR * 0.08;
+  ctx.fillStyle = '#2c2c2c';
+  ctx.beginPath(); ctx.arc(px - eyeOX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(px + eyeOX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+
+  // Eye shine
+  ctx.fillStyle = 'rgba(255,255,255,0.80)';
+  ctx.beginPath(); ctx.arc(px - eyeOX + eyeR * 0.35, eyeY - eyeR * 0.35, eyeR * 0.38, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(px + eyeOX + eyeR * 0.35, eyeY - eyeR * 0.35, eyeR * 0.38, 0, Math.PI * 2); ctx.fill();
+
+  // Smile
+  ctx.strokeStyle = '#2c2c2c';
+  ctx.lineWidth = Math.max(0.8, headR * 0.12);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(px, headCY + headR * 0.10, headR * 0.35, 0.15, Math.PI - 0.15);
+  ctx.stroke();
+
+  // Head outline
+  ctx.strokeStyle = darken(skinColor, 0.20);
+  ctx.lineWidth = Math.max(0.8, headR * 0.10);
+  ctx.beginPath();
+  ctx.arc(px, headCY, headR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // ── Boarded: checkmark badge ───────────────────────────────────────────────
+  if (boarded) {
+    const bR = headR * 0.70;
+    const bX = px + headR * 0.80;
+    const bY = headCY - headR * 0.80;
+
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath(); ctx.arc(bX, bY, bR, 0, Math.PI * 2);
+    ctx.fillStyle = '#27ae60'; ctx.fill();
+
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = Math.max(1, bR * 0.38);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bX - bR * 0.45, bY + bR * 0.05);
+    ctx.lineTo(bX - bR * 0.05, bY + bR * 0.45);
+    ctx.lineTo(bX + bR * 0.50, bY - bR * 0.38);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+/**
  * Draw the passenger queue row (between parking area and grid).
  *
  * @param {CanvasRenderingContext2D} ctx
@@ -393,8 +563,8 @@ export function drawParkingArea(ctx, parkingSpots, vehicles, cellSize, offsetX, 
  * @param {number} totalCols     - number of grid columns (to determine total width)
  */
 export function drawPassengerQueue(ctx, passengers, cellSize, offsetX, offsetY, areaH, totalCols) {
-  const totalW = totalCols * cellSize;
-  const centerY = offsetY + areaH / 2;
+  const totalW  = totalCols * cellSize;
+  const baseY   = offsetY + areaH * 0.96; // feet sit near the bottom of the strip
 
   // Background strip
   ctx.save();
@@ -404,51 +574,17 @@ export function drawPassengerQueue(ctx, passengers, cellSize, offsetX, offsetY, 
   const n = passengers.length;
   if (n === 0) { ctx.restore(); return; }
 
-  // Size each stickman to fit nicely
-  const maxR  = Math.min(areaH * 0.32, (totalW / n) * 0.38);
-  const r     = Math.max(4, maxR);
-  const gap   = Math.max(r * 0.4, (totalW - n * r * 2) / (n + 1));
-  const startX = offsetX + gap + r;
+  // Scale so every passenger fits in areaH with a little breathing room
+  const maxScale = areaH * 0.88;
+  const slotW    = totalW / n;
+  const scale    = Math.min(maxScale, slotW * 0.72);
 
   for (let i = 0; i < n; i++) {
     const p  = passengers[i];
-    const px = startX + i * (r * 2 + gap);
-    const baseColor = getColor(p.color);
-
-    ctx.globalAlpha = p.boarded ? 0.22 : 1.0;
-
-    // Body circle
-    ctx.beginPath();
-    ctx.arc(px, centerY, r, 0, Math.PI * 2);
-    ctx.fillStyle = baseColor;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Head (smaller circle on top)
-    const hr = r * 0.50;
-    ctx.beginPath();
-    ctx.arc(px, centerY - r * 0.58, hr, 0, Math.PI * 2);
-    ctx.fillStyle = darken(baseColor, 0.15);
-    ctx.fill();
-
-    if (p.boarded) {
-      // Tiny checkmark
-      ctx.globalAlpha = 0.7;
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = Math.max(1, r * 0.28);
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.beginPath();
-      ctx.moveTo(px - r * 0.35, centerY);
-      ctx.lineTo(px - r * 0.05, centerY + r * 0.32);
-      ctx.lineTo(px + r * 0.42, centerY - r * 0.30);
-      ctx.stroke();
-    }
+    const px = offsetX + slotW * (i + 0.5);
+    drawPassenger(ctx, px, baseY, scale, getColor(p.color), p.boarded);
   }
 
-  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
