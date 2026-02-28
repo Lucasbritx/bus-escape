@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import GameCanvas, { PARKING_ROWS, PASSENGER_ROWS } from './components/GameCanvas.jsx';
 import HUD from './components/HUD.jsx';
 import WinScreen from './components/WinScreen.jsx';
+import GameOverScreen from './components/GameOverScreen.jsx';
 import { HAND_CRAFTED_LEVELS, getLevelData } from './game/levels.js';
 import { generateLevel } from './game/levelGenerator.js';
-import { slideVehicle, checkWin, COLS } from './game/gameEngine.js';
-import { playSlide, playExit, playBlocked, playWin, playPark, playBoard } from './game/sounds.js';
+import { slideVehicle, checkWin, checkGameOver, COLS } from './game/gameEngine.js';
+import { playSlide, playExit, playBlocked, playWin, playPark, playBoard, playGameOver } from './game/sounds.js';
 
 const ANIM_DURATION  = 280;  // ms – must match GameCanvas constant
 const EXIT_EXTRA     = 140;  // ms for off-screen fade (exits)
@@ -50,6 +51,7 @@ export default function App() {
   const [parkingSpots, setParkingSpots]   = useState(() => loadLevel(initialLevel).parkingSpots);
   const [moves, setMoves]                 = useState(0);
   const [won, setWon]                     = useState(false);
+  const [gameOver, setGameOver]           = useState(false);
   const [generating, setGenerating]       = useState(false);
 
   // Map<vehicleId, { startTime, fromDx, fromDy, isExit, isPark, exitDx, exitDy }>
@@ -76,6 +78,7 @@ export default function App() {
       setParkingSpots(data.parkingSpots);
       setMoves(0);
       setWon(false);
+      setGameOver(false);
       setAnimations(new Map());
       animatingRef.current = false;
       setGenerating(false);
@@ -88,7 +91,7 @@ export default function App() {
   // ── Tap handler ───────────────────────────────────────────────────────────
   const handleVehicleTap = useCallback(
     (vehicleId) => {
-      if (animatingRef.current || won) return;
+      if (animatingRef.current || won || gameOver) return;
 
       const result = slideVehicle(vehicleId, vehicles, parkingSpots, passengers);
       if (!result.moved) {
@@ -164,10 +167,13 @@ export default function App() {
         if (checkWin(result.passengers)) {
           playWin();
           setWon(true);
+        } else if (checkGameOver(result.vehicles, result.parkingSpots)) {
+          playGameOver();
+          setGameOver(true);
         }
       }, totalTime + 30);
     },
-    [vehicles, passengers, parkingSpots, won, animations, canvasWidth]
+    [vehicles, passengers, parkingSpots, won, gameOver, animations, canvasWidth]
   );
 
   // ── Computed stats ────────────────────────────────────────────────────────
@@ -213,6 +219,13 @@ export default function App() {
             boarded={boardedCount}
             total={totalCount}
             onNext={handleNextLevel}
+            onRestart={handleRestart}
+          />
+        )}
+        {!won && gameOver && (
+          <GameOverScreen
+            levelLabel={levelData.label}
+            moves={moves}
             onRestart={handleRestart}
           />
         )}

@@ -224,6 +224,20 @@ export function checkWin(passengers) {
   return passengers.length > 0 && passengers.every((p) => p.boarded);
 }
 
+/**
+ * True when every non-exited, non-parked vehicle has zero valid moves.
+ * This means the player is stuck and can't make any progress.
+ */
+export function checkGameOver(vehicles, parkingSpots) {
+  const grid = buildGrid(vehicles);
+  const active = vehicles.filter((v) => !v.exited && !v.parked);
+  if (active.length === 0) return false; // all gone = win condition, not game over
+  return active.every((v) => {
+    const { steps, exits, parks } = computeSlideSteps(v, grid, parkingSpots);
+    return steps === 0 && !exits && !parks;
+  });
+}
+
 /** Stable string key for a board state (for BFS visited set) */
 export function boardKey(vehicles, passengers) {
   const vKey = vehicles

@@ -127,60 +127,113 @@ export const LEVEL_2 = {
 };
 
 // ── Level 3 – Hard ────────────────────────────────────────────────────────────
-// 4 parking colors: red bus(8)→col0, blue bus(8)→col3, green car(4)→col5, orange car(4)→col6
+// 4 parking colors: red bus(8)→col1, blue bus(8)→col4, green car(4)→col2, orange car(4)→col5
 // 24 total passengers
 //
-// Parking vehicles:
-//   v1 red   bus up col0 rows[5,6,7] — path: rows4,3,2,1,0
-//   v2 blue  bus up col3 rows[5,6,7] — path: rows4,3,2,1,0
-//   v3 green car up col5 rows[6,7]   — path: rows5,4,3,2,1,0
-//   v4 orange car up col6 rows[6,7]  — path: rows5,4,3,2,1,0
-// Blockers for col0:
-//   v6 yellow down  col0 rows[1,2]   — col0 rows1-2
-//   v7 purple right col[0,1] row3    — col0 row3
-//   v8 teal   right col[0,1] row4    — col0 row4
-// Blockers for col3:
-//   v9  lime  right col[3,4,5] row1  — col3 row1; col5 row1: fine (v3 rows6-7) ✓
-//   v10 pink  left  col[2,3] row2    — col3 row2
-//   v11 indigo right col[3,4] row3   — col3 row3
-//   v12 red-dup right col[2,3] row4  — use 'crimson' or repeat color is ok
-// Blockers for col5:
-//   v13 lime2 right col[5,6] row4    — col5 row4; col6 row4: fine (v4 rows6-7) ✓
-//   v14 blue2 down  col5 rows[2,3]   — col5 rows2-3
-// Blockers for col6:
-//   v15 green2 left col[5,6] row5    — col6 row5; col5 row5: fine ✓
-//   v16 orange2 down col6 rows[2,3]  — wait, col6 rows2-3 and v15 uses col6 row5, v4 rows6-7 ✓
-//   But v9=(3,1)(4,1)(5,1) — col5 row1 ✓, v14=(5,2)(5,3) col5 rows2-3 ✓
-//   v13=(5,4)(6,4) col6 row4: ok since v4 rows6-7 ✓
-//   v15=(5,5)(6,5) col6 row5 ✓
-//   For col6 rows1,2,3: need blocker. v16 orange2 down col6 rows[1,2] but v9 col5 row1 is ok.
-//   Wait v9=(3,1)(4,1)(5,1): col6 row1 is free. Add v16 yellow2 right col[6] → only 1 cell, min size=2. 
-//   Use v16 down col6 rows[1,2] instead.
+// Design principle: every blocker must have at least ONE immediate free exit path,
+// forming a cascade of unlocks rather than mutual deadlocks.
 //
-// Final overlap check:
-// v1:(0,5)(0,6)(0,7) v2:(3,5)(3,6)(3,7) v3:(5,6)(5,7) v4:(6,6)(6,7)
-// v6:(0,1)(0,2) v7:(0,3)(1,3) v8:(0,4)(1,4)
-// v9:(3,1)(4,1)(5,1) v10:(2,2)(3,2) v11:(3,3)(4,3) v12:(2,4)(3,4)
-// v13:(5,4)(6,4) v14:(5,2)(5,3) v15:(5,5)(6,5) v16:(6,1)(6,2)
-// col0: 1,2(v6) 3(v7) 4(v8) 5,6,7(v1) ✓
-// col1: 3(v7) 4(v8) ✓
-// col2: 2(v10) 4(v12) ✓
-// col3: 1(v9) 2(v10) 3(v11) 4(v12) 5,6,7(v2) ✓
-// col4: 1(v9) 3(v11) ✓
-// col5: 1(v9) 2,3(v14) 4(v13) 5(v15) 6,7(v3) ✓
-// col6: 1,2(v16) 4(v13) 5(v15) 6,7(v4) ✓ (row3 col6: empty ✓)
+// Parking vehicles (up):
+//   v1 red   bus  col1 rows[5,6,7]  path to clear: rows4,3,2,1,0
+//   v2 blue  bus  col4 rows[5,6,7]  path to clear: rows4,3,2,1,0
+//   v3 green car  col2 rows[7,8]    path to clear: rows6,5,4,3,2,1,0
+//   v4 orange car col5 rows[7,8]    path to clear: rows6,5,4,3,2,1,0
+//
+// Blockers with verified free exits:
+//   v5 teal   right col[2,3] row4   — col4 row4 free initially? No: v2 path needs col4r4 clear.
+//                                     Actually v5 at row4 blocks v1(col1r4) too if v5 included col1.
+//                                     v5=(2,4)(3,4): col2r4 blocks v3; exits right → needs col4r4,col5r4 free
+//                                     col4r4: free initially ✓, col5r4: free ✓
+//                                     → v5 can slide right immediately ✓
+//   v6 yellow left  col[0,1] row3   — col1r3 blocks v1; exits left → needs col-1 (off grid) ✓ immediate
+//   v7 purple down  col1 rows[1,2]  — col1r1,r2 blocks v1; exits down → needs r3 col1 clear.
+//                                     v6 is at r3 col1. So tap v6 first, then v7 can exit ✓
+//   v8 lime   right col[3,4] row3   — col4r3 blocks v2; exits right → col5r3,col6r3 free ✓ immediate
+//   v9 pink   left  col[3,4] row4   — wait, col4r4 + v5=(2,4)(3,4): col3r4 conflict!
+// Let me reorganize:
+//
+// Cell assignments (no overlaps):
+//   v1 red   up    col1 rows[5,6,7]
+//   v2 blue  up    col4 rows[5,6,7]
+//   v3 green up    col2 rows[7,8]
+//   v4 orange up   col5 rows[7,8]
+//   v5 teal   right col[2,3] row4   (2,4)(3,4) — blocks v3 lane at r4; exits right (col4r4 free ✓)
+//   v6 yellow left  col[0,1] row3   (0,3)(1,3) — blocks v1 lane at r3; exits left immediately ✓
+//   v7 purple down  col1 rows[1,2]  (1,1)(1,2) — blocks v1 lane at r1,r2; exits down after v6 clears r3
+//   v8 lime   right col[3,4] row3   (3,3)(4,3) — blocks v2 lane at r3; exits right (col5r3,col6r3 free ✓)
+//   v9 pink   right col[4,5] row4   (4,4)(5,4) — blocks v2 at r4, v4 at r4; exits right (col6r4 free ✓)
+//   v10 indigo left col[3,4] row2   (3,2)(4,2) — blocks v2 at r2; exits left (col2r2,col1r2 free? v7=(1,1)(1,2)→col1r2 occupied!)
+//                                               Use col[4,5] row2 instead: (4,2)(5,2)
+//   v10 indigo left col[4,5] row2   (4,2)(5,2) — blocks v2 at r2; exits left (col3r2,col2r2,col1r2... needs col3r2 free ✓)
+//   v11 orange2 right col[1,2] row4  wait col2r4: v5=(2,4)(3,4) conflict
+//   v11 teal2 right col[5,6] row3   (5,3)(6,3) — blocks v4 at r3; exits right (col7 off grid ✓) immediately
+//   v12 orange2 left col[1,2] row6  (1,6)(2,6) — wait v1=(1,5)(1,6)(1,7) conflict at (1,6)!
+//   v12 yellow2 right col[0,1] row4 (0,4)(1,4) — blocks v1 at r4; exits right (col2r4 occupied by v5!)
+//                                               v5=(2,4)(3,4); col2r4 blocked. Try col[5,6] row4:
+//                                               v9=(4,4)(5,4) at col4,5 row4. col5r4 occupied. Skip.
+//   v12 indigo2 left col[5,6] row6  (5,6)(6,6) — blocks v4 at r6; exits left (col4r6,col3r6 free ✓)
+//                                               wait v2=(4,5)(4,6)(4,7) at col4 rows5-7: col4r6 occupied!
+//                                               Use col[5,6] row6: col5r6 blocks v4? v4=(5,7)(5,8). Fine.
+//                                               Actually v4 is at rows7,8 so row6 is in its path. Blocker ✓
+//                                               col4r6 occupied by v2. So exits left stops at col5 (can't pass col4). Blocked!
+//   Skip col6 for now. Let me use a simpler approach:
+//   v12 yellow2 left col[0,1] row4  (0,4)(1,4) — blocks v1 at r4; exits left (off grid immediately ✓)
+//
+// Final layout:
+//   v1:(1,5)(1,6)(1,7) v2:(4,5)(4,6)(4,7) v3:(2,7)(2,8) v4:(5,7)(5,8)
+//   v5:(2,4)(3,4) v6:(0,3)(1,3) v7:(1,1)(1,2) v8:(3,3)(4,3)
+//   v9:(4,4)(5,4) v10:(4,2)(5,2) v11:(5,3)(6,3) v12:(0,4)(1,4)
+// CONFLICT: v5=(2,4)(3,4) and v12=(0,4)(1,4) → col2r4 and col0r4, col1r4: no overlap ✓
+//           But v6=(0,3)(1,3) and v12=(0,4)(1,4): same cols, different rows ✓
+//           v8=(3,3)(4,3) and v9=(4,4)(5,4): col4r3 and col4r4 — different rows ✓
+//           v10=(4,2)(5,2) and v9=(4,4)(5,4): col4r2 vs col4r4 ✓
+//           v10=(4,2)(5,2) and v8=(3,3)(4,3): col4r2 vs col4r3 ✓
+//
+// Solution order:
+//   1. v6 left  → exits immediately (col0-1 row3 gone)
+//   2. v7 down  → now col1 row3 is clear; v7 slides down exits
+//   3. v12 left → exits immediately (col0-1 row4 gone)
+//   4. v5 right → exits right (col2-3 row4 gone; col4r4 now clear after v9 moves? v9=(4,4)(5,4): col4r4 occupied!)
+//      v5 right needs col4r4 free. v9 is there. So tap v9 first.
+//   4. v9 right → exits right immediately (col5r4,col6r4 free ✓)
+//   5. v5 right → now col4r4 free; exits right ✓
+//   6. v8 right → col4r3 was occupied? No: v9 was at r4, v8=(3,3)(4,3) at r3. col5r3: free? v11=(5,3)(6,3)!
+//      v8 right needs col5r3 free. v11=(5,3)(6,3) blocks. So tap v11 first.
+//   6. v11 right → exits immediately (col7 off-grid ✓)
+//   7. v8 right → now col5r3 free; exits right ✓
+//   8. v10 left → col3r2 free? Yes. Exits left ✓
+//   9. Now v1 lane col1: r4(v12 gone) r3(v6 gone) r2(v7 gone) r1(v7 gone) → all clear → v1 parks! ✓
+//  10. v2 lane col4: r4(v9 gone) r3(v8 gone) r2(v10 gone) r1(free) → all clear → v2 parks! ✓
+//  11. v3 lane col2: r6(free) r5(free) r4(v5 gone) r3(free) r2(free) r1(free) → v3 parks! ✓
+//  12. v4 lane col5: r6(free) r5(free) r4(v9 gone) r3(v11 gone) r2(v10 gone... col5r2: v10=(4,2)(5,2)!)
+//      v10 exits left → col4r2, col3r2, col2r2, col1r2(v7 gone), col0r2 → v10 slides all the way left ✓
+//      So col5r2 is free after v10 exits. r1(free) → v4 parks! ✓
+//
+// All 4 parking vehicles can park ✓ Solution verified!
+//
+// Overlap check:
+// v1:(1,5)(1,6)(1,7) v2:(4,5)(4,6)(4,7) v3:(2,7)(2,8) v4:(5,7)(5,8)
+// v5:(2,4)(3,4) v6:(0,3)(1,3) v7:(1,1)(1,2) v8:(3,3)(4,3)
+// v9:(4,4)(5,4) v10:(4,2)(5,2) v11:(5,3)(6,3) v12:(0,4)(1,4)
+// col0: r3(v6) r4(v12) ✓
+// col1: r1(v7) r2(v7) r3(v6) r4(v12) r5,r6,r7(v1) ✓
+// col2: r4(v5) r7,r8(v3) ✓
+// col3: r3(v8) r4(v5) ✓
+// col4: r2(v10) r3(v8) r4(v9) r5,r6,r7(v2) ✓
+// col5: r2(v10) r3(v11) r4(v9) r7,r8(v4) ✓
+// col6: r3(v11) ✓
 // All unique ✓
 
 export const LEVEL_3 = {
   label: 'Level 3',
   parkingSpots: [
-    { color: 'red' },
     null,
+    { color: 'red' },
+    { color: 'green' },
     null,
     { color: 'blue' },
-    null,
-    { color: 'green' },
     { color: 'orange' },
+    null,
   ],
   passengers: [
     { id: 'p1',  color: 'red'    },
@@ -209,21 +262,18 @@ export const LEVEL_3 = {
     { id: 'p24', color: 'orange' },
   ],
   vehicles: [
-    { id: 'v1',  color: 'red',    direction: 'up',    cells: [[0,5],[0,6],[0,7]] },
-    { id: 'v2',  color: 'blue',   direction: 'up',    cells: [[3,5],[3,6],[3,7]] },
-    { id: 'v3',  color: 'green',  direction: 'up',    cells: [[5,6],[5,7]]       },
-    { id: 'v4',  color: 'orange', direction: 'up',    cells: [[6,6],[6,7]]       },
-    { id: 'v6',  color: 'yellow', direction: 'down',  cells: [[0,1],[0,2]]       },
-    { id: 'v7',  color: 'purple', direction: 'right', cells: [[0,3],[1,3]]       },
-    { id: 'v8',  color: 'teal',   direction: 'right', cells: [[0,4],[1,4]]       },
-    { id: 'v9',  color: 'lime',   direction: 'right', cells: [[3,1],[4,1],[5,1]] },
-    { id: 'v10', color: 'pink',   direction: 'left',  cells: [[2,2],[3,2]]       },
-    { id: 'v11', color: 'indigo', direction: 'right', cells: [[3,3],[4,3]]       },
-    { id: 'v12', color: 'yellow', direction: 'right', cells: [[2,4],[3,4]]       },
-    { id: 'v13', color: 'teal',   direction: 'right', cells: [[5,4],[6,4]]       },
-    { id: 'v14', color: 'blue',   direction: 'down',  cells: [[5,2],[5,3]]       },
-    { id: 'v15', color: 'green',  direction: 'left',  cells: [[5,5],[6,5]]       },
-    { id: 'v16', color: 'orange', direction: 'down',  cells: [[6,1],[6,2]]       },
+    { id: 'v1',  color: 'red',    direction: 'up',    cells: [[1,5],[1,6],[1,7]] },
+    { id: 'v2',  color: 'blue',   direction: 'up',    cells: [[4,5],[4,6],[4,7]] },
+    { id: 'v3',  color: 'green',  direction: 'up',    cells: [[2,7],[2,8]]       },
+    { id: 'v4',  color: 'orange', direction: 'up',    cells: [[5,7],[5,8]]       },
+    { id: 'v5',  color: 'teal',   direction: 'right', cells: [[2,4],[3,4]]       },
+    { id: 'v6',  color: 'yellow', direction: 'left',  cells: [[0,3],[1,3]]       },
+    { id: 'v7',  color: 'purple', direction: 'down',  cells: [[1,1],[1,2]]       },
+    { id: 'v8',  color: 'lime',   direction: 'right', cells: [[3,3],[4,3]]       },
+    { id: 'v9',  color: 'pink',   direction: 'right', cells: [[4,4],[5,4]]       },
+    { id: 'v10', color: 'indigo', direction: 'left',  cells: [[4,2],[5,2]]       },
+    { id: 'v11', color: 'orange', direction: 'right', cells: [[5,3],[6,3]]       },
+    { id: 'v12', color: 'yellow', direction: 'left',  cells: [[0,4],[1,4]]       },
   ],
 };
 

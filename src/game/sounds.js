@@ -159,6 +159,34 @@ export function playBoard() {
   } catch (_) {}
 }
 
+// ── Game Over: low descending tones ──────────────────────────────────────────
+export function playGameOver() {
+  try {
+    const ac = getCtx();
+    // Three descending tones: G3 → E3 → C3
+    const notes = [196.00, 164.81, 130.81];
+    notes.forEach((freq, i) => {
+      const t    = ac.currentTime + i * 0.22;
+      const osc  = ac.createOscillator();
+      const gain = ac.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.85, t + 0.30);
+
+      gain.gain.setValueAtTime(0,    t);
+      gain.gain.linearRampToValueAtTime(0.22, t + 0.02);
+      gain.gain.setValueAtTime(0.22, t + 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.40);
+
+      osc.connect(gain);
+      gain.connect(ac.destination);
+      osc.start(t);
+      osc.stop(t + 0.42);
+    });
+  } catch (_) {}
+}
+
 // ── Win: cheerful C-major arpeggio ───────────────────────────────────────────
 export function playWin() {
   try {
